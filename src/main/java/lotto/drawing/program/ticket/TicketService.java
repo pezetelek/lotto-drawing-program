@@ -1,5 +1,7 @@
 package lotto.drawing.program.ticket;
 
+import java.util.List;
+import java.util.stream.IntStream;
 import lotto.drawing.program.draw.GameType;
 import lotto.drawing.program.draw.NumberDrawingService;
 import org.springframework.stereotype.Service;
@@ -19,5 +21,11 @@ public class TicketService {
                 numberDrawingService.draw(gameType),
                 numberDrawingService.drawExtraNumbers(gameType)
         );
+    }
+
+    public List<TicketDto> generate(GameType gameType, int count) {
+        return IntStream.range(0, count)
+                .mapToObj(ignored -> generate(gameType))
+                .toList();
     }
 }
