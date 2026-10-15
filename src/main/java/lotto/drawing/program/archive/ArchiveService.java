@@ -26,6 +26,7 @@ public class ArchiveService {
         this.archivedDrawRepository = archivedDrawRepository;
     }
 
+    @Transactional(readOnly = true)
     public List<ArchivedDrawDto> findByGameType(GameType gameType) {
         return archivedDrawRepository.findByGameTypeOrderByDrawDateDesc(gameType).stream()
                 .map(ArchivedDrawDto::from)
@@ -34,7 +35,10 @@ public class ArchiveService {
 
     @Transactional
     public ArchivedDrawDto create(ArchivedDrawRequest request) {
-        if (archivedDrawRepository.existsByGameTypeAndDrawDate(request.gameType(), request.drawDate())) {
+        boolean drawExists = request.drawNumber() == null
+                ? archivedDrawRepository.existsByGameTypeAndDrawDate(request.gameType(), request.drawDate())
+                : archivedDrawRepository.existsByGameTypeAndDrawNumber(request.gameType(), request.drawNumber());
+        if (drawExists) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Draw already exists for this game and date.");
         }
 
@@ -43,14 +47,14 @@ public class ArchiveService {
         validateDraw(request.gameType(), numbers, extraNumbers);
 
         ArchivedDraw saved = archivedDrawRepository.save(
-                new ArchivedDraw(request.gameType(), request.drawDate(), numbers, extraNumbers)
+                new ArchivedDraw(request.gameType(), request.drawNumber(), request.drawDate(), numbers, extraNumbers)
         );
 
         return ArchivedDrawDto.from(saved);
     }
 
     @Transactional
-    public ArchiveImportResultDto importCsv(MultipartFile file) {
+    public ArchiveImportResultDto importCsv(MultipartFile file, GameType requestedGameType) {
         if (file.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "CSV file is empty.");
         }
@@ -58,11 +62,15 @@ public class ArchiveService {
         int imported = 0;
         int skipped = 0;
         List<String> errors = new ArrayList<>();
+        GameType semicolonGameType = requestedGameType == null
+                ? inferGameType(file.getOriginalFilename())
+                : requestedGameType;
 
         try (BufferedReader reader = new BufferedReader(
                 new InputStreamReader(file.getInputStream(), StandardCharsets.UTF_8))) {
             String line;
             int lineNumber = 0;
+            long generatedDrawNumber = 0;
 
             while ((line = reader.readLine()) != null) {
                 lineNumber++;
@@ -72,16 +80,27 @@ public class ArchiveService {
                 }
 
                 try {
-                    CsvDraw csvDraw = parseCsvDraw(line);
+                    CsvDraw csvDraw = parseCsvDraw(line, semicolonGameType);
+                    if (csvDraw.drawNumber() == null && csvDraw.gameType() == GameType.EURO_JACKPOT) {
+                        generatedDrawNumber++;
+                        csvDraw = new CsvDraw(
+                                csvDraw.gameType(), generatedDrawNumber, csvDraw.drawDate(),
+                                csvDraw.numbers(), csvDraw.extraNumbers()
+                        );
+                    }
 
-                    if (archivedDrawRepository.existsByGameTypeAndDrawDate(csvDraw.gameType(), csvDraw.drawDate())) {
+                    boolean drawExists = csvDraw.drawNumber() == null
+                            ? archivedDrawRepository.existsByGameTypeAndDrawDate(csvDraw.gameType(), csvDraw.drawDate())
+                            : archivedDrawRepository.existsByGameTypeAndDrawNumber(csvDraw.gameType(), csvDraw.drawNumber());
+                    if (drawExists) {
                         skipped++;
                         continue;
                     }
 
-                    validateDraw(csvDraw.gameType(), csvDraw.numbers(), csvDraw.extraNumbers());
+                    validateImportedDraw(csvDraw.gameType(), csvDraw.numbers(), csvDraw.extraNumbers());
                     archivedDrawRepository.save(new ArchivedDraw(
                             csvDraw.gameType(),
+                            csvDraw.drawNumber(),
                             csvDraw.drawDate(),
                             csvDraw.numbers(),
                             csvDraw.extraNumbers()
@@ -98,8 +117,30 @@ public class ArchiveService {
         return new ArchiveImportResultDto(imported, skipped, errors);
     }
 
-    private CsvDraw parseCsvDraw(String line) {
-        List<String> columns = splitCsvLine(line);
+    private CsvDraw parseCsvDraw(String line, GameType semicolonGameType) {
+        String cleanLine = line.replaceFirst("^\\uFEFF", "");
+        if (cleanLine.indexOf(';') >= 0) {
+            List<String> columns = splitCsvLine(cleanLine, ';');
+            if (columns.size() < 4) {
+                throw new IllegalArgumentException("Expected semicolon columns: numer;data;godzina;liczby;...");
+            }
+
+            try {
+                Long drawNumber = columns.get(0).isBlank() ? null : Long.valueOf(columns.get(0).trim());
+                LocalDate drawDate = LocalDate.parse(columns.get(1).trim());
+                List<Integer> numbers = sortedCopy(parseNumbers(columns.get(3)));
+                List<Integer> extraNumbers = columns.size() > 4
+                        ? sortedCopy(parseNumbers(columns.get(4)))
+                        : List.of();
+                return new CsvDraw(semicolonGameType, drawNumber, drawDate, numbers, extraNumbers);
+            } catch (DateTimeParseException ex) {
+                throw new IllegalArgumentException("Invalid date. Use yyyy-MM-dd.");
+            } catch (IllegalArgumentException ex) {
+                throw new IllegalArgumentException(ex.getMessage());
+            }
+        }
+
+        List<String> columns = splitCsvLine(cleanLine, ',');
 
         if (columns.size() < 3 || columns.size() > 4) {
             throw new IllegalArgumentException("Expected columns: gameType,drawDate,numbers,extraNumbers.");
@@ -111,7 +152,7 @@ public class ArchiveService {
             List<Integer> numbers = sortedCopy(parseNumbers(columns.get(2)));
             List<Integer> extraNumbers = columns.size() == 4 ? sortedCopy(parseNumbers(columns.get(3))) : List.of();
 
-            return new CsvDraw(gameType, drawDate, numbers, extraNumbers);
+            return new CsvDraw(gameType, null, drawDate, numbers, extraNumbers);
         } catch (DateTimeParseException ex) {
             throw new IllegalArgumentException("Invalid date. Use yyyy-MM-dd.");
         } catch (IllegalArgumentException ex) {
@@ -119,7 +160,17 @@ public class ArchiveService {
         }
     }
 
-    private List<String> splitCsvLine(String line) {
+    private GameType inferGameType(String filename) {
+        if (filename != null && filename.toLowerCase().contains("mini")) {
+            return GameType.MINI_LOTTO;
+        }
+        if (filename != null && filename.toLowerCase().contains("euro")) {
+            return GameType.EURO_JACKPOT;
+        }
+        return GameType.LOTTO;
+    }
+
+    private List<String> splitCsvLine(String line, char delimiter) {
         List<String> columns = new ArrayList<>();
         StringBuilder current = new StringBuilder();
         boolean quoted = false;
@@ -129,7 +180,7 @@ public class ArchiveService {
 
             if (character == '"') {
                 quoted = !quoted;
-            } else if (character == ',' && !quoted) {
+            } else if (character == delimiter && !quoted) {
                 columns.add(current.toString().trim());
                 current.setLength(0);
             } else {
@@ -164,6 +215,12 @@ public class ArchiveService {
         validateNumberGroup(extraNumbers, gameType.getExtraNumbersToPick(), gameType.getMaxExtraNumber(), "extraNumbers");
     }
 
+    private void validateImportedDraw(GameType gameType, List<Integer> numbers, List<Integer> extraNumbers) {
+        int maxNumber = gameType == GameType.MINI_LOTTO ? 49 : gameType.getMaxNumber();
+        validateNumberGroup(numbers, gameType.getNumbersToPick(), maxNumber, "numbers");
+        validateNumberGroup(extraNumbers, gameType.getExtraNumbersToPick(), gameType.getMaxExtraNumber(), "extraNumbers");
+    }
+
     private void validateNumberGroup(List<Integer> numbers, int expectedCount, int maxNumber, String fieldName) {
         if (numbers.size() != expectedCount) {
             throw new IllegalArgumentException(fieldName + " must contain exactly " + expectedCount + " values.");
@@ -189,11 +246,14 @@ public class ArchiveService {
     }
 
     private boolean isHeader(String line, int lineNumber) {
-        return lineNumber == 1 && line.toLowerCase().startsWith("gametype,");
+        String normalized = line.replaceFirst("^\\uFEFF", "").toLowerCase();
+        return lineNumber == 1 && (normalized.startsWith("gametype,")
+                || normalized.startsWith("numer;data;godzina;liczby;"));
     }
 
     private record CsvDraw(
             GameType gameType,
+            Long drawNumber,
             LocalDate drawDate,
             List<Integer> numbers,
             List<Integer> extraNumbers

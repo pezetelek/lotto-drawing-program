@@ -32,7 +32,10 @@ public class ArchiveController {
     }
 
     @PostMapping("/import")
-    public ArchiveImportResultDto importCsv(@RequestParam("file") MultipartFile file) {
-        return archiveService.importCsv(file);
+    public ArchiveImportResultDto importCsv(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "gameType", required = false) GameType gameType
+    ) {
+        return archiveService.importCsv(file, gameType);
     }
 }

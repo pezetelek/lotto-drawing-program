@@ -12,13 +12,13 @@ Program do losowego generowania liczb oraz prowadzenia archiwum losowan Lotto, M
 Utworz baze MySQL:
 
 ```sql
-CREATE DATABASE lotto_drawing_program CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE lotto CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ```
 
 Domyslna konfiguracja laczy sie z:
 
 ```text
-jdbc:mysql://localhost:3306/lotto_drawing_program
+jdbc:mysql://localhost:3306/lotto
 user: root
 password: pusty
 ```

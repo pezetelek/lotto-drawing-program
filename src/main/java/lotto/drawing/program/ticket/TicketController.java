@@ -23,13 +23,31 @@ public class TicketController {
     }
 
     @PostMapping
-    public List<TicketDto> generate(@RequestParam GameType gameType, @RequestParam(defaultValue = "1") int count) {
+    public List<TicketDto> generate(
+            @RequestParam GameType gameType,
+            @RequestParam(defaultValue = "1") int count,
+            @RequestParam(defaultValue = "false") boolean excludeLastDraw,
+            @RequestParam(defaultValue = "false") boolean uniqueHistorical,
+            @RequestParam(defaultValue = "false") boolean balancedParity,
+            @RequestParam(defaultValue = "false") boolean balancedRange,
+            @RequestParam(defaultValue = "false") boolean maxTwoConsecutive
+    ) {
         if (count < MIN_TICKET_COUNT || count > MAX_TICKET_COUNT) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
                     "Count must be between " + MIN_TICKET_COUNT + " and " + MAX_TICKET_COUNT);
         }
 
-        return ticketService.generate(gameType, count);
+        return ticketService.generate(
+                gameType,
+                count,
+                new TicketGenerationOptions(
+                        excludeLastDraw,
+                        uniqueHistorical,
+                        balancedParity,
+                        balancedRange,
+                        maxTwoConsecutive
+                )
+        );
     }
 }

@@ -8,6 +8,7 @@ import lotto.drawing.program.draw.GameType;
 
 public record ArchivedDrawRequest(
         @NotNull GameType gameType,
+        Long drawNumber,
         @NotNull LocalDate drawDate,
         @NotEmpty List<Integer> numbers,
         List<Integer> extraNumbers

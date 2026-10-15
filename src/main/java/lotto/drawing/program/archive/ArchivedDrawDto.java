@@ -7,6 +7,7 @@ import lotto.drawing.program.draw.GameType;
 public record ArchivedDrawDto(
         Long id,
         GameType gameType,
+        Long drawNumber,
         LocalDate drawDate,
         List<Integer> numbers,
         List<Integer> extraNumbers
@@ -15,9 +16,10 @@ public record ArchivedDrawDto(
         return new ArchivedDrawDto(
                 draw.getId(),
                 draw.getGameType(),
+                draw.getDrawNumber(),
                 draw.getDrawDate(),
-                draw.getNumbers(),
-                draw.getExtraNumbers()
+                List.copyOf(draw.getNumbers()),
+                List.copyOf(draw.getExtraNumbers())
         );
     }
 }
